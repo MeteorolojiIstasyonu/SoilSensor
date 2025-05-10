@@ -12,9 +12,14 @@ bool BME280Sensor::begin(uint8_t address) {
 }
 
 bool BME280Sensor::readData() {
+    //MERT: Eger hata olursa asagidaki fonksiyonlar NaN dönuyor,
+    //bunu kontrol edelim, NAN dönen deger varsa return false yapalim
     temperature = bme.readTemperature(); // °C
     humidity = bme.readHumidity();       // %
     pressure = bme.readPressure() / 100.0F; // hPa
+
+
+    // MERT: Serial println yerine logger fonksiyonu kullanalaim
     Serial.println("----- BME280 Sensör Verileri -----");
     Serial.printf("Hava Sıcaklığı: %.2f °C\n", temperature);
     Serial.printf("Hava Nem: %.1f %%\n", humidity);
@@ -37,6 +42,8 @@ bool BME280Sensor::readBME280WithRetry(int maxRetries) {
         retryCount++;
         LOG_WARN("BME280 okuma denemesi %d başarısız.", retryCount);
         begin(); // tekrar başlat
+        // MERT: Delayler parametrik olmali. 
+        // Bme280 nin header dosyasina define ile preprocessor komutu olarak paramertre sekilinde tanimlayalim
         delay(1000);
     }
 
