@@ -10,6 +10,7 @@ public:
     NpkSensor(HardwareSerial &serial, uint8_t modbusAddress);
     void begin();
     bool readData();
+    bool readNPKWithRetry(int maxRetries = 5);
 
     float getSicaklik() const { return SICAKLIK; }
     float getNem() const { return NEM; }

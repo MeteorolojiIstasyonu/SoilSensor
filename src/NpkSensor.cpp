@@ -1,4 +1,6 @@
 #include "NpkSensor.h"
+#include "Config.h"
+#include "LoggerModule.h" // Logger için gerekli
 
 // **Statik üye değişkenleri**
 NpkSensor* NpkSensor::instance = nullptr;
@@ -81,3 +83,29 @@ bool NpkSensor::readData() {
         return false;
     }
 }
+
+bool NpkSensor::readNPKWithRetry(int maxRetries) {
+    bool NPK_success = false;
+    int retryCount = 0;
+
+    while (retryCount < maxRetries) {
+        if (readData()) {
+            LOG_INFO("NPK verisi başarıyla okundu.");
+            NPK_success = true;
+            break;
+        }
+        retryCount++;
+        begin(); // tekrar başlat
+        LOG_WARN("NPK okuma denemesi %d başarısız.", retryCount);
+        delay(1000);
+    }
+
+    if (!NPK_success) {
+        LOG_ERROR("NPK sensörüne %d denemede erişilemedi!", maxRetries);
+    }
+
+    return NPK_success;
+}
+
+
+
