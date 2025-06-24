@@ -9,93 +9,58 @@
 #include "LoggerModule.h"
 #include "NpkSensor.h"
 #include "BME280Sensor.h"
+#include "RTC_1302.h" 
+#include <RunningAverage.h>
+#include <Update.h> // OTA için eklendi
+#include <ArduinoHttpClient.h> // OTA için eklendi
 
 // TinyGSM Libraries
-
 #define TINY_GSM_MODEM_SIM808 // Modem türünü tanımla (GPS İÇİN)
 #include <TinyGsmClient.h>
 #include <PubSubClient.h>
 #include <SSLClient.h> // Güvenli bağlantı için
 
+
+extern RTC_DATA_ATTR int wakeCounter;
+
 class Communication_Driver {
 public:
-   // Oluşturucu: Modemin seri portuna ve sensör nesnelerine yapılan referanslarla başlatır
-    Communication_Driver(HardwareSerial& modemSerialPort, NpkSensor& npkSensor, BME280Sensor& bmeSensor);
+    Communication_Driver(HardwareSerial& modemSerialPort, NpkSensor& npkSensor, BME280Sensor& bmeSensor, RTC_Module& rtcModule);
 
-    // Modemi kurar 
-// Başarılı olduğunda true, başarısız olduğunda false döndürür.
+    bool pwrmodem();
     bool setupModem();
-
-    // GPRS şebekesine bağlanır
-// Başarılı olursa true, başarısız olursa false döndürür.
-    bool connectGPRS();
-
-    // MQTT broker'a bağlanır (henüz kurulmamışsa modem kurulumu ve GPRS bağlantısı dahildir)
-// Başarılı olursa true, başarısız olursa false döndürür.
-    bool connectMQTT();
-
-    // Sensör verileri ve pil durumuyla JSON yük dizesini oluşturur.
-// sup_bat_val: Harici olarak hesaplanan ana pil voltajı.
-    String createJsonPayload();
-
-    // Verileri MQTT konusuna yayınlar.
-// sup_bat_val: Ana pil voltajı.
-// Yayınlama başarılıysa true, aksi takdirde false döndürür.
-    bool publishData();
-
-    // MQTT istemci döngüsünü (örneğin, canlı tutma, mesaj işleme) işler. loop()'u çağırır.
-    void mqttLoop();
-
-    // MQTT istemcisinin şu anda bağlı olup olmadığını kontrol eder.
-// Bağlıysa true, aksi takdirde false döndürür.
-    bool isMqttConnected();
-
-    // GPRS'in şu anda sürücünün modem örneği üzerinden bağlı olup olmadığını kontrol eder.
-// GPRS bağlıysa true, aksi halde false döndürür.
-    bool isGprsConnectedDriver(); 
-
-    // MQTT ve GPRS bağlantısını keser ve modemi kapatır.
+    int restartModem();
     void disconnect();
-
-    // Dahili modem pil voltaj dizisini (_sup_4v) günceller.
-    void updateModemBatteryStatus();
-
-    //pil voltajını okur
-    float readAndProcessBatteryVoltage();
-
-    // GPS'i etkinleştirir ve konum bilgilerini alır.
-    bool enableGPS();
-    bool getGPSLocation(float* lat, float* lon, float* speed = nullptr, float* alt = nullptr, int* year = nullptr, int* month = nullptr, int* day = nullptr, int* hour = nullptr, int* minute = nullptr, int* second = nullptr);
-    bool readGPSWithRetry(int maxRetries = 20);
-    bool disableGPS();
     
-
-    /**
-     * GPRS iletişimini yeniden başlatır.
-     * Önce mevcut GPRS bağlantısını keser, sonra yeniden bağlanmaya çalışır.
-     * Başarılı olursa 0, başarısız olursa 1.
-     */
+    bool connectGPRS();
     int restartGPRS();
 
-    /**
-     * Modemi yeniden başlatır.
-     * Modemi kapatır, açar ve yeniden başlatır.
-     *  Başarılı olursa 0, başarısız olursa 1.
-     */
-    int restartModem();
-    // ---- Yeni Fonksiyonlar Sonu ---
-
-    // PubSubClient'ın gelen MQTT mesajlarını işlemesi için statik geri çağırma işlevi.
+    bool connectMQTT();
+    void mqttLoop();
+    bool isMqttConnected();
     static void staticMqttCallback(char* topic, byte* payload, unsigned int length);
+
+    String createCsvDataLine(); // New: To create a single CSV data row
+    String createJsonPayloadForAWS(const String& csv_content); // New: To create the final JSON
+    bool publishData(const char* payload);
     
-    // MQTT mesajlarını işlemek için statik geri arama tarafından çağrılan statik olmayan işleyici.
-    void handleMqttCallback(char* topic, byte* payload, unsigned int length);
+    bool enableGPS();
+    bool getGPS(float* lat, float* lon, float* speed = nullptr, float* alt = nullptr, int* year = nullptr, int* month = nullptr, int* day = nullptr, int* hour = nullptr, int* minute = nullptr, int* second = nullptr);
+    bool readGPSWithRetry(int maxRetries = 50);
+    bool disableGPS();
+
+    void updateRtcWithGpsTime();
+    
+    void updateModemBatteryStatus();
+    float readAndProcessBatteryVoltage();
+    float readAndProcessSolarVoltage();
 
 private:
     HardwareSerial& _modemSerial; // Modemin donanım seri portuna referans
     NpkSensor& _npkSensor;        // NPK sensör nesnesine referans
     BME280Sensor& _bmeSensor;     // BME280 sensör nesnesine referans
-
+    RTC_Module& _rtc; 
+    
     TinyGsm _modem;               // TinyGSM modem nesnesi
     TinyGsmClient _gsmClient;     // GPRS için TinyGSM istemcisi
     SSLClient _secureClient;      // Güvenli MQTT için SSL istemcisi
@@ -114,14 +79,21 @@ private:
     int _gps_second;
     bool _gps_fix_available;
     char Location[50];
+    char gpsTime[25];
 
     float _sup_bat_external;
-
+    float _sup_solar_external;
     char _sup_4v[6];              // Modemin pil voltajını bir dize olarak depolar (örneğin, "4.12V")
-
-   // Statik MQTT geri araması tarafından kullanılan bu sınıfın örneğine ait statik işaretçi
+    RunningAverage _batteryVoltageAvg;
+    RunningAverage _solarVoltageAvg;
+    
     static Communication_Driver* _instance; 
+    // OTA güncellemesi için özel fonksiyon
+    void performOTA(const char* ota_url);
+    // Yardımcı fonksiyon: SHA-256 hash'i hesaplar
+    String calculateSHA256(const String& input);
+
 
 };
 
-#endif 
+#endif
