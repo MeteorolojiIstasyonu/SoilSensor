@@ -48,7 +48,6 @@ public:
     bool getGPS(float* lat, float* lon, float* speed = nullptr, float* alt = nullptr, int* year = nullptr, int* month = nullptr, int* day = nullptr, int* hour = nullptr, int* minute = nullptr, int* second = nullptr);
     bool readGPSWithRetry(int maxRetries = 50);
     bool disableGPS();
-
     void updateRtcWithGpsTime();
     
     void updateModemBatteryStatus();
@@ -89,7 +88,8 @@ private:
     
     static Communication_Driver* _instance; 
     // OTA güncellemesi için özel fonksiyon
-    void performOTA(const char* ota_url);
+    void performOTA(const char* ota_url, const char* version_id);
+    void publishGpsData(); // GPS isteğini işleyen fonksiyon
     // Yardımcı fonksiyon: SHA-256 hash'i hesaplar
     String calculateSHA256(const String& input);
 

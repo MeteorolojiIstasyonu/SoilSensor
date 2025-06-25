@@ -106,7 +106,6 @@ void setup() {
 void loop() {
     wakeCounter++;
     LOG_INFO("Loop başlatıldı - Wake count: %d", wakeCounter);
-    powerUpSensors(); 
     commDriver.readAndProcessSolarVoltage(); // Güneş paneli voltajını oku
     commDriver.readAndProcessBatteryVoltage();
     commDriver.updateModemBatteryStatus(); // For _sup_4v
@@ -126,23 +125,12 @@ void loop() {
 
     if (wakeCounter >= MAX_WAKECOUNTER) {
         LOG_INFO("MAX_WAKECOUNTER'a ulaşıldı. Veri göndermeye hazırlanıyor.");
-        
-        // Gönderme için modem ve MQTT kurulumu
-        if (!commDriver.setupModem()) { 
-             LOG_ERROR("Modem kurulumu gönderilmeden önce başarısız oldu. Uyku moduna geçilecek.");
-             goToDeepSleep();
-             return; 
-        }
-       
-        if (!commDriver.isMqttConnected()) {
-            LOG_INFO("MQTT bağlantısı yok, bağlantı kuruluyor...");
-          
+
             if (!commDriver.connectMQTT()) { 
                 LOG_ERROR("MQTT bağlantısı kurulamadı. Veri SD kartta kalacak.");
                  goToDeepSleep(); 
                  return; 
             }
-        }
 
         if (commDriver.connectMQTT()) {
             commDriver.mqttLoop(); // Process any incoming MQTT messages

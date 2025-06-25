@@ -144,6 +144,7 @@ bool Communication_Driver::pwrmodem() {
 
     return true; // Başarılı
 }
+
 bool Communication_Driver::setupModem() {
     LOG_INFO("Modem başlatılıyor...");
     
@@ -188,14 +189,13 @@ int Communication_Driver::restartModem() {
     delay(3000); // Modemin kapanması için zaman verin
 
     LOG_INFO("Modem açılıyor (PWR_sim808 pini HIGH)...");
-    digitalWrite(PWR_sim808, LOW); 
-    delay(1000); 
-    digitalWrite(PWR_sim808, HIGH); 
-    delay(2000);
-
+    if (!pwrmodem()) {
+        LOG_ERROR("Modem güç kontrolü başarısız!");
+        return false; 
+    }
     
     LOG_INFO("Modem yeniden başlatılıyor ve kuruluyor...");
-    if (this->setupModem()) {
+    if (setupModem()) {
         LOG_INFO("Modem başarıyla yeniden başlatıldı ve kuruldu.");
         return 0; // Success
     } else {
@@ -205,10 +205,12 @@ int Communication_Driver::restartModem() {
 }
 
 bool Communication_Driver::enableGPS() {
-
-    setupModem();
     LOG_INFO("GPS etkinleştiriliyor...");
-    if (_modem.enableGPS()) { // TinyGsmGPS.tpp içindeki public enableGPS() kullanılır
+    if (!setupModem()) {
+        LOG_ERROR("Modem kurulumu başarısız!");
+        return false; 
+    }
+    if (_modem.enableGPS()) { 
         LOG_INFO("GPS başarıyla etkinleştirildi.");
         return true;
     } else {
@@ -219,7 +221,7 @@ bool Communication_Driver::enableGPS() {
 
 bool Communication_Driver::disableGPS() {
     LOG_INFO("GPS devre dışı bırakılıyor...");
-    if (_modem.disableGPS()) { // TinyGsmGPS.tpp içindeki public disableGPS() kullanılır
+    if (_modem.disableGPS()) { 
         LOG_INFO("GPS başarıyla devre dışı bırakıldı.");
         return true;
     } else {
@@ -282,10 +284,20 @@ bool Communication_Driver::getGPS(float* lat, float* lon, float* speed, float* a
 }
 
 bool Communication_Driver::readGPSWithRetry(int maxRetries) {
+    disconnect(); // Modem bağlantısını kes
+    delay(1000); // Bağlantının kesilmesi için bekleyin
+    if (enableGPS()) { // GPS'i etkinleştir
+        LOG_INFO("GPS etkinleştirildi, konum alınıyor...");
+    } else {
+        LOG_ERROR("GPS etkinleştirilemedi, konum alınamıyor.");
+        return false; // GPS etkinleştirilemediyse başarısız
+    }
+
     int retryCount = 0;
     while (retryCount < maxRetries) {
         if (getGPS(&_gps_lat, &_gps_lon, &_gps_speed, &_gps_alt, &_gps_year, &_gps_month, &_gps_day, &_gps_hour, &_gps_minute, &_gps_second)) {
             LOG_INFO("GPS Konumu alındı: Lat=%.6f, Lon=%.6f", _gps_lat, _gps_lon);
+            updateRtcWithGpsTime(); // GPS zamanını RTC ile güncelle
             return true; // Başarılı
         } else {
             LOG_WARN("GPS konumu alınamadı. Deneme %d/%d", retryCount + 1, maxRetries);
@@ -295,10 +307,25 @@ bool Communication_Driver::readGPSWithRetry(int maxRetries) {
     }
     return false; // Tüm denemeler başarısız oldu
 }
+
+void Communication_Driver::updateRtcWithGpsTime() {
+    if (_gps_fix_available && _gps_year > 2023) { // GPS'ten geçerli bir zaman alındıysa
+        LOG_INFO("RTC, GPS zamanı ile güncelleniyor: %s", gpsTime);
+        _rtc.setDateTime(_gps_year, _gps_month, _gps_day, _gps_hour, _gps_minute, _gps_second);
+    } else {
+        LOG_WARN("RTC güncellemesi için geçerli GPS zamanı yok.");
+    }
+}
+
 bool Communication_Driver::connectGPRS() {
     if (_modem.isGprsConnected()) {
         LOG_INFO("GPRS zaten bağlı.");
         return true;
+    }
+
+    if (!setupModem()) {
+        LOG_ERROR("Modem kurulumu başarısız!");
+        return false; // Modem kurulumu başarısızsa GPRS'e bağlanma denemeyin
     }
 
     LOG_INFO("GPRS bağlantısı kuruluyor...");
@@ -322,22 +349,19 @@ bool Communication_Driver::connectGPRS() {
 }
 
 bool Communication_Driver::connectMQTT() {
-    LOG_INFO("Modem başlatılıyor...");
-    connectGPRS(); // 🔹 **GPRS Bağlantısını Kur**
+LOG_INFO("MQTT kuruluyor...");
+connectGPRS(); // 🔹 **GPRS Bağlantısını Kur**
 const int MAX_MODEM_RETRIES = 5;
 int modemRetries = 0;
 
 while ((!_modem.isNetworkConnected() || !_modem.isGprsConnected()) && modemRetries < MAX_MODEM_RETRIES) {
     LOG_WARN("Modem veya GPRS bağlı değil. (%d/%d) Kurulum ve bağlantı yeniden deneniyor...", modemRetries + 1, MAX_MODEM_RETRIES);
 
-    if (!setupModem()) {
-        LOG_ERROR("Modem kurulumu başarısız (deneme %d)", modemRetries + 1);
-    } else if (!connectGPRS()) {
+    if (!connectGPRS()) {
         LOG_ERROR("GPRS bağlantısı başarısız (deneme %d)", modemRetries + 1);
     } else {
         break; // Başarılı bağlantı
     }
-
     modemRetries++;
     delay(2000); // Gecikme ile modem stabilize olabilir
 }
@@ -418,6 +442,41 @@ int Communication_Driver::restartGPRS() {
     }
 }
 
+void Communication_Driver::disconnect() {
+    if (_mqttClient.connected()) {
+        _mqttClient.disconnect();
+        LOG_INFO("MQTT bağlantısı kapatıldı.");
+    }
+    if (_modem.isGprsConnected()) {
+        _modem.gprsDisconnect();
+        LOG_INFO("GPRS bağlantısı kapatıldı.");
+    }
+    
+    LOG_INFO("Modem kapatılıyor...");
+    if (_modem.poweroff()) { // SIM800 serisi için poweroff() 
+        LOG_INFO("Modem başarıyla kapatıldı.");
+    } else {
+        LOG_WARN("Modem kapatılamadı veya zaten kapalıydı.");
+    }
+    delay(500); // Modeme kapanması için zaman verin
+}
+// Yardımcı fonksiyon: Girdi string'inin SHA-256 hash'ini hesaplar ve hex string olarak döndürür
+String Communication_Driver::calculateSHA256(const String& input) {
+    byte shaResult[32];
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts_ret(&ctx, 0); // 0 for SHA-256
+    mbedtls_sha256_update_ret(&ctx, (const unsigned char*)input.c_str(), input.length());
+    mbedtls_sha256_finish_ret(&ctx, shaResult);
+    mbedtls_sha256_free(&ctx);
+
+    char hexResult[65];
+    for (int i = 0; i < 32; i++) {
+        sprintf(hexResult + i * 2, "%02x", shaResult[i]);
+    }
+    hexResult[64] = '\0';
+    return String(hexResult);
+}
 
 String Communication_Driver::createCsvDataLine() {
     String csv_row = "";
@@ -462,24 +521,6 @@ String Communication_Driver::createCsvDataLine() {
     return csv_row;
 }
 
-// Yardımcı fonksiyon: Girdi string'inin SHA-256 hash'ini hesaplar ve hex string olarak döndürür
-String Communication_Driver::calculateSHA256(const String& input) {
-    byte shaResult[32];
-    mbedtls_sha256_context ctx;
-    mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_starts_ret(&ctx, 0); // 0 for SHA-256
-    mbedtls_sha256_update_ret(&ctx, (const unsigned char*)input.c_str(), input.length());
-    mbedtls_sha256_finish_ret(&ctx, shaResult);
-    mbedtls_sha256_free(&ctx);
-
-    char hexResult[65];
-    for (int i = 0; i < 32; i++) {
-        sprintf(hexResult + i * 2, "%02x", shaResult[i]);
-    }
-    hexResult[64] = '\0';
-    return String(hexResult);
-}
-
 String Communication_Driver::createJsonPayloadForAWS(const String& csv_content) {
     // Adım 1: Önce header nesnesini oluştur
     JsonDocument header_doc;
@@ -522,7 +563,6 @@ String Communication_Driver::createJsonPayloadForAWS(const String& csv_content) 
     return jsonBuffer;
 }
 
-
 bool Communication_Driver::publishData(const char* payload) {
     if (!_mqttClient.connected()) {
         LOG_ERROR("MQTT bağlı değil, veri yayınlanamıyor.");
@@ -547,6 +587,42 @@ bool Communication_Driver::publishData(const char* payload) {
     return false;
 }
 
+void Communication_Driver::publishGpsData() {
+    if (readGPSWithRetry()) {   
+        StaticJsonDocument<256> gpsDoc;
+        JsonObject header = gpsDoc["header"].to<JsonObject>();
+        header["device_id"] = deviceId;
+        header["Location"] = Location;  // "40.123456,29.123456" formatı
+        header["gpsTime"] = gpsTime; // "2025-06-19 13:45:00" formatı
+        
+        String gpsPayload;
+        serializeJson(gpsDoc, gpsPayload);
+        
+        String hash_code = calculateSHA256(gpsPayload);
+        
+        JsonDocument final_gpsdoc;
+        final_gpsdoc["hash_code"] = hash_code;
+        final_gpsdoc["header"] = gpsDoc.as<JsonObject>();
+        
+        String jsonBuffer;
+        serializeJson(final_gpsdoc, jsonBuffer);
+
+        if (disableGPS()) {
+            LOG_INFO("GPS modülü devre dışı bırakıldı.");
+        }
+        
+        if (connectMQTT()) {
+            publishData(jsonBuffer.c_str());
+            LOG_INFO("GPS verisi MQTT ile sunucuya gönderildi.");
+        } 
+        else {
+             LOG_ERROR("MQTT bağlantısı kurulamadı, GPS verisi gönderilemedi.");
+        }
+    } else {
+         LOG_WARN("GPS verisi alınamadı, gönderim yapılmadı.");
+    }
+}
+
 void Communication_Driver::mqttLoop() {
     if (_mqttClient.connected()) {
         _mqttClient.loop();
@@ -555,26 +631,6 @@ void Communication_Driver::mqttLoop() {
 
 bool Communication_Driver::isMqttConnected() {
     return _mqttClient.connected();
-}
-
-
-void Communication_Driver::disconnect() {
-    if (_mqttClient.connected()) {
-        _mqttClient.disconnect();
-        LOG_INFO("MQTT bağlantısı kapatıldı.");
-    }
-    if (_modem.isGprsConnected()) {
-        _modem.gprsDisconnect();
-        LOG_INFO("GPRS bağlantısı kapatıldı.");
-    }
-    
-    LOG_INFO("Modem kapatılıyor...");
-    if (_modem.poweroff()) { // SIM800 serisi için poweroff() 
-        LOG_INFO("Modem başarıyla kapatıldı.");
-    } else {
-        LOG_WARN("Modem kapatılamadı veya zaten kapalıydı.");
-    }
-    delay(500); // Modeme kapanması için zaman verin
 }
 
 void Communication_Driver::updateModemBatteryStatus() {
@@ -664,15 +720,8 @@ void Communication_Driver::staticMqttCallback(char* topic, byte* payload, unsign
 
                 if (ota_url && version_id && strlen(ota_url) > 0 && strlen(version_id) > 0) {
                     LOG_INFO("OTA güncelleme mesajı alındı. URL: %s, Version: %s", ota_url, version_id);
-
-                    if (writeFile(SD, VERSION_ID_FILE, version_id)) {
-                        LOG_INFO("Yeni version_id (%s) SD karta kaydedildi.", version_id);
-                    } else {
-                        LOG_ERROR("Yeni version_id (%s) SD karta kaydedilemedi!", version_id);
-                    }
-
                     if (_instance) {
-                        _instance->performOTA(ota_url);
+                        _instance->performOTA(ota_url, version_id);
                     } else {
                         LOG_ERROR("Communication_Driver örneği bulunamadı, OTA başlatılamıyor.");
                     }
@@ -691,45 +740,10 @@ void Communication_Driver::staticMqttCallback(char* topic, byte* payload, unsign
             const char* gps_req = header["gps_request"];
             if (gps_req && strcmp(gps_req, "true") == 0) {
                 LOG_INFO("GPS isteği alındı: true");
-                
                 if (_instance) {
-                   _instance->disconnect();  // MQTT + GPRS bağlantısını kapat
-               }
-               delay(1000); // Donanıma stabilizasyon için zaman tanı
-
-                
-                if (_instance && _instance->enableGPS()) {
-                    LOG_INFO("GPS modülü etkinleştirildi, konum alınıyor...");
-                }
-                if (_instance && _instance->readGPSWithRetry()) {
-                    _instance->updateRtcWithGpsTime();
-                    
-                    StaticJsonDocument<256> gpsDoc;
-                    JsonObject header = gpsDoc["header"].to<JsonObject>();
-                    header["device_id"] = deviceId;
-                    header["Location"] = _instance->Location;  // "40.123456,29.123456" formatı
-                    header["gpsTime"] = _instance->gpsTime; // "2025-06-19 13:45:00" formatı
-                    String gpsPayload;
-                    serializeJson(gpsDoc, gpsPayload);
-                    String hash_code = _instance->calculateSHA256(gpsPayload);
-                    JsonDocument final_gpsdoc;
-                    final_gpsdoc["hash_code"] = hash_code;
-                    final_gpsdoc["header"] = gpsDoc.as<JsonObject>();
-                    String jsonBuffer;
-                    serializeJson(final_gpsdoc, jsonBuffer);
-
-                    if (_instance && _instance->disableGPS()) {
-                        LOG_INFO("GPS modülü devre dışı bırakıldı.");
-                    }
-                    if (_instance->connectMQTT()) {
-                        _instance->publishData(jsonBuffer.c_str());
-                        LOG_INFO("GPS verisi MQTT ile sunucuya gönderildi.");
-                    } 
-                    else {
-                         LOG_ERROR("MQTT bağlantısı kurulamadı, GPS verisi gönderilemedi.");
-                    }
+                    _instance->publishGpsData();
                 } else {
-                     LOG_WARN("GPS verisi alınamadı, gönderim yapılmadı.");
+                    LOG_ERROR("Communication_Driver örneği bulunamadı, GPS isteği işlenemiyor.");
                 }
             } else {
                 LOG_INFO("GPS isteği false veya geçersiz, işlem yapılmadı.");
@@ -743,8 +757,7 @@ void Communication_Driver::staticMqttCallback(char* topic, byte* payload, unsign
     }
 }
 
-
-void Communication_Driver::performOTA(const char* url) {
+void Communication_Driver::performOTA(const char* url , const char* version) {
     LOG_INFO("OTA güncellemesi başlatılıyor. URL: %s", url);
     float current_battery_voltage = readAndProcessBatteryVoltage(); // Ortalama voltajı okur ve _sup_bat_external güncellenir
     if (current_battery_voltage < 3.9f) {
@@ -761,7 +774,7 @@ void Communication_Driver::performOTA(const char* url) {
     int protocolEnd = urlStr.indexOf("://");
     if (protocolEnd == -1) {
         LOG_ERROR("OTA: Geçersiz URL formatı.");
-        writeFile(SD, VERSION_ID_FILE, 0);
+        
         return;
     }
 
@@ -784,7 +797,7 @@ void Communication_Driver::performOTA(const char* url) {
         LOG_INFO("OTA: HTTP kullanılacak.");
     } else {
         LOG_ERROR("OTA: Desteklenmeyen protokol: %s", protocol.c_str());
-        writeFile(SD, VERSION_ID_FILE, 0);
+        
         return;
     }
 
@@ -795,7 +808,7 @@ void Communication_Driver::performOTA(const char* url) {
     
     if (!_modem.isGprsConnected() && !connectGPRS()) {
         LOG_ERROR("OTA için GPRS bağlantısı kurulamadı.");
-        writeFile(SD, VERSION_ID_FILE, 0);
+        
         return;
     }
     
@@ -806,7 +819,7 @@ void Communication_Driver::performOTA(const char* url) {
 
     if (err != 0) {
         LOG_ERROR("OTA: HttpClient GET isteği başarısız. Hata: %d", err);
-        writeFile(SD, VERSION_ID_FILE, 0);
+        
         return;
     }
 
@@ -823,7 +836,7 @@ void Communication_Driver::performOTA(const char* url) {
     int contentLength = client.contentLength();
     if (contentLength <= 0) {
         LOG_ERROR("OTA: Geçersiz içerik uzunluğu.");
-        writeFile(SD, VERSION_ID_FILE, 0);
+        
         return;
     }
 
@@ -838,7 +851,7 @@ void Communication_Driver::performOTA(const char* url) {
     File updateFile = SD.open(OTA_FIRMWARE_FILENAME, FILE_WRITE);
     if (!updateFile) {
         LOG_ERROR("OTA: SD kartta dosya oluşturulamadı: %s", OTA_FIRMWARE_FILENAME);
-        writeFile(SD, VERSION_ID_FILE, 0);
+        
         return;
     }
 
@@ -864,7 +877,7 @@ void Communication_Driver::performOTA(const char* url) {
             delay(50);
         } else {
             LOG_ERROR("OTA: İndirme sırasında okuma hatası!");
-            writeFile(SD, VERSION_ID_FILE, 0);
+            
             break;
         }
     }
@@ -875,7 +888,7 @@ void Communication_Driver::performOTA(const char* url) {
     if (written != contentLength) {
         LOG_ERROR("OTA: İndirme tamamlanamadı. İndirilen: %d, Beklenen: %d", written, contentLength);
         SD.remove(OTA_FIRMWARE_FILENAME); // Tamamlanmamış dosyayı sil
-        writeFile(SD, VERSION_ID_FILE, 0);
+        
         return;
     }
     
@@ -886,7 +899,7 @@ void Communication_Driver::performOTA(const char* url) {
     File file = SD.open(OTA_FIRMWARE_FILENAME, FILE_READ);
     if (!file) {
         LOG_ERROR("OTA: İndirilen firmware dosyası açılamadı.");
-        writeFile(SD, VERSION_ID_FILE, 0);
+        
         return;
     }
 
@@ -894,14 +907,14 @@ void Communication_Driver::performOTA(const char* url) {
     if (fileSize == 0) {
         LOG_ERROR("OTA: Firmware dosyası boş.");
         file.close();
-        writeFile(SD, VERSION_ID_FILE, 0);
+        
         return;
     }
     
     if (!Update.begin(fileSize)) {
         LOG_ERROR("OTA: Güncelleme başlatılamadı. Yetersiz alan olabilir. Hata: %s", Update.errorString());
         file.close();
-        writeFile(SD, VERSION_ID_FILE, 0);
+        
         return;
     }
 
@@ -911,27 +924,20 @@ void Communication_Driver::performOTA(const char* url) {
     if (writtenToFlash != fileSize) {
         LOG_ERROR("OTA: Flash'a yazma hatası. Yazılan: %d, Beklenen: %d", writtenToFlash, fileSize);
         LOG_ERROR("OTA: Hata Detayı: %s", Update.errorString());
-        writeFile(SD, VERSION_ID_FILE, 0);
         return;
     }
 
     if (Update.end(true)) {
         LOG_INFO("OTA: Güncelleme başarıyla tamamlandı!");
+        if (writeFile(SD, VERSION_ID_FILE, version)) {
+                        LOG_INFO("Yeni version_id (%s) SD karta kaydedildi.", version);
+                    } else {
+                        LOG_ERROR("Yeni version_id (%s) SD karta kaydedilemedi!", version);
+                    }
         LOG_INFO("OTA: Cihaz yeniden başlatılıyor...");
         delay(1000);
         ESP.restart();
     } else {
         LOG_ERROR("OTA: Güncelleme hatası! Hata: %s", Update.errorString());
-        writeFile(SD, VERSION_ID_FILE, 0);
-    }
-}
-
-// Yeni eklenen fonksiyon: GPS verisi ile RTC'yi günceller
-void Communication_Driver::updateRtcWithGpsTime() {
-    if (_gps_fix_available && _gps_year > 2023) { // GPS'ten geçerli bir zaman alındıysa
-        LOG_INFO("RTC, GPS zamanı ile güncelleniyor: %s", gpsTime);
-        _rtc.setDateTime(_gps_year, _gps_month, _gps_day, _gps_hour, _gps_minute, _gps_second);
-    } else {
-        LOG_WARN("RTC güncellemesi için geçerli GPS zamanı yok.");
     }
 }
