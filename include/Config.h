@@ -15,10 +15,10 @@
 #define OTA_FIRMWARE_FILENAME "/firmware.bin" // Firmware'in SD Karta kaydedileceği dosya adı
 #define VERSION_ID_FILE "/version.id"  
 
-//#define uykusuresi (20 * 1000000)  // 20 saniye**********************
-#define uykusuresi (3600ULL * 1000000ULL) // 1 saat = 3.600.000.000 µs (64-bit güvenli)*************************
+#define uykusuresi (20 * 1000000)  // 20 saniye**********************
+//#define uykusuresi (3600ULL * 1000000ULL) // 1 saat = 3.600.000.000 µs (64-bit güvenli)*************************
 //#define uykusuresi (1800LL * 1000000LL)  // 30dk (64-bit güvenli)*************************
-#define MAX_WAKECOUNTER 4    // verinin gönderileceği maksimum uyanma sayısı
+#define MAX_WAKECOUNTER 1    // verinin gönderileceği maksimum uyanma sayısı
 // SD karta kaydedilecek dosyanın adını bir değişkende tutalım
 
 
