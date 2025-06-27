@@ -119,6 +119,15 @@ Communication_Driver::Communication_Driver(HardwareSerial& modemSerialPort, NpkS
     _batteryVoltageAvg.clear(); // Ortalamayı başlatırken temizle
     _solarVoltageAvg.clear();   // Ortalamayı başlatırken temizle
 }
+
+int Communication_Driver::getLastStatusCode() {
+    return _last_status_code;
+}
+
+void Communication_Driver::resetLastStatusCode() {
+    _last_status_code = -1; // Durum kodunu bir sonraki mesaj için sıfırla
+}
+
 bool Communication_Driver::pwrmodem() {
     // Modemi PWR_sim808 aktif hale getir
     digitalWrite(PWR_sim808, LOW); 
@@ -705,23 +714,33 @@ void Communication_Driver::staticMqttCallback(char* topic, byte* payload, unsign
     }
     LOG_INFO("Mesaj bu cihaza ait.");
 
-    // 4. OTA ve GPS isteklerini kontrol et
+    //  status_code, OTA ve GPS isteklerini kontrol et
     if (doc.containsKey("header") && doc["header"].is<JsonObject>()) {
         JsonObject header = doc["header"];
+
+        //Status Code kontrolü
+        if (header.containsKey("status_code")) {
+            int status_code = header["status_code"].as<int>();
+            LOG_INFO("Sunucudan status_code alindi: %d", status_code);
+            if (_instance) {
+                _instance->_last_status_code = status_code;
+            }
+        }
 
         // OTA işlemini kontrol et
         if (header.containsKey("ota_request") && header["ota_request"].is<JsonObject>()) {
             JsonObject ota_request = header["ota_request"];
 
-            // URL ve version_id varsa, işlem yapılır
             if (ota_request.containsKey("url") && ota_request.containsKey("version_id")) {
-                const char* ota_url = ota_request["url"];
-                const char* version_id = ota_request["version_id"];
+                const char* ota_url_ptr = ota_request["url"];
+                const char* version_id_ptr = ota_request["version_id"];
 
-                if (ota_url && version_id && strlen(ota_url) > 0 && strlen(version_id) > 0) {
-                    LOG_INFO("OTA güncelleme mesajı alındı. URL: %s, Version: %s", ota_url, version_id);
+                if (ota_url_ptr && version_id_ptr && strlen(ota_url_ptr) > 0 && strlen(version_id_ptr) > 0) {
+                    LOG_INFO("OTA güncelleme isteği alındı. Bayrak ayarlandı. URL: %s, Version: %s", ota_url_ptr, version_id_ptr);
                     if (_instance) {
-                        _instance->performOTA(ota_url, version_id);
+                        _instance->ota_url = String(ota_url_ptr);
+                        _instance->ota_version_id = String(version_id_ptr);
+                        _instance->ota_request_flag = true;
                     } else {
                         LOG_ERROR("Communication_Driver örneği bulunamadı, OTA başlatılamıyor.");
                     }
@@ -739,9 +758,9 @@ void Communication_Driver::staticMqttCallback(char* topic, byte* payload, unsign
         if (header.containsKey("gps_request")) {
             const char* gps_req = header["gps_request"];
             if (gps_req && strcmp(gps_req, "true") == 0) {
-                LOG_INFO("GPS isteği alındı: true");
+                LOG_INFO("GPS isteği alındı: true. Bayrak ayarlandı.");
                 if (_instance) {
-                    _instance->publishGpsData();
+                    _instance->gps_request_flag = true;
                 } else {
                     LOG_ERROR("Communication_Driver örneği bulunamadı, GPS isteği işlenemiyor.");
                 }
