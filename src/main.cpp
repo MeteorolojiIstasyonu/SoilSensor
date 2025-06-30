@@ -155,6 +155,9 @@ void loop() {
                                 LOG_ERROR("Dosya silinemedi: %s", SD_DATA_FILE);
                             }
                             break;
+                        } else if (statusCode == -2) { // HASH UYUŞMAZLIĞI DURUMU
+                            LOG_WARN("Status_code -2 alındı: Sunucu yanıtının HASH kodu geçersiz! Veri tekrar gönderiliyor.");
+                            commDriver.publishData(awsPayload.c_str());
                         } else if (statusCode == 1) {
                             LOG_INFO("Status_code 1 alındı: yanlış hash code, Sunucu tekrar gönderim istedi.");
                             commDriver.publishData(awsPayload.c_str());

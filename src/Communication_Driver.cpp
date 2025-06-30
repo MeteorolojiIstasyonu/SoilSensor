@@ -704,6 +704,29 @@ void Communication_Driver::staticMqttCallback(char* topic, byte* payload, unsign
         return;
     }
 
+     // --- HASH KONTROLÜ ---
+    const char* received_hash = doc["hash_code"];
+    if (!received_hash || !doc.containsKey("header") || !doc["header"].is<JsonObject>()) {
+        LOG_WARN("Gelen mesajda 'hash_code' veya 'header' bulunamadı. Hash kontrol edilemiyor.");
+        if (_instance) {
+            _instance->_last_status_code = -2; // Hash hatası için özel kod
+        }
+        return;
+    }
+
+    String header_string;
+    serializeJson(doc["header"], header_string);
+    String calculated_hash = _instance->calculateSHA256(header_string);
+
+    if (strcmp(received_hash, calculated_hash.c_str()) != 0) {
+        LOG_ERROR("HASH UYUŞMAZLIĞI");
+        if (_instance) {
+            _instance->_last_status_code = -2; // Hash hatası için özel kod
+        }
+        return; // Hash yanlışsa, mesajın geri kalanını işleme
+    }
+    LOG_INFO("Hash kodu başarıyla doğrulandı.");
+
     // 3. Cihaz ID'sini kontrol et
     const char* received_device_id = doc["header"]["device_id"];
     if (!received_device_id || deviceId.compareTo(received_device_id) != 0) {
@@ -827,7 +850,6 @@ void Communication_Driver::performOTA(const char* url , const char* version) {
     
     if (!_modem.isGprsConnected() && !connectGPRS()) {
         LOG_ERROR("OTA için GPRS bağlantısı kurulamadı.");
-        
         return;
     }
     
