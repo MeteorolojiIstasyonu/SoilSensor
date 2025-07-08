@@ -10,17 +10,46 @@ NpkSensor::NpkSensor(HardwareSerial &serial, uint8_t modbusAddress)
     instance = this;
 }
 
-void NpkSensor::begin() {
+int NpkSensor::initializeAndRead() {
+    LOG_INFO("NPK sensörü başlatılıyor...");
+    if (!begin()) {
+        LOG_ERROR("NPK sensörü başlatılamadı. Okuma yapılmayacak.");
+        return 1;
+    }
+    
+    factorOffsetReset(); // Kalibrasyon faktörlerini sıfırla
+
+    LOG_INFO("NPK sensörü başlatıldı. Veri okunuyor...");
+    if (!readNPKWithRetry(5)) {
+        LOG_ERROR("NPK sensöründen veri okunamadı.");
+        return 2;
+    }
+
+    LOG_INFO("NPK sensörü başlatma ve okuma işlemi başarılı.");
+    return 0;
+}
+
+
+bool NpkSensor::begin() {
     pinMode(DE_RE, OUTPUT);
     digitalWrite(DE_RE, LOW);
     modbusSerial.begin(4800, SERIAL_8N1, RXX, TXX);
 
     node.begin(modbusAddress, modbusSerial);
-    
-    // **Statik üye fonksiyonları kullanarak yönlendirme**
     node.preTransmission(NpkSensor::preTransmissionStatic);
     node.postTransmission(NpkSensor::postTransmissionStatic);
+
+    // Sensörle test iletişimi yap: 0x00 adresinden 1 register oku
+    uint8_t result = node.readHoldingRegisters(0x00, 1);
+    if (result == node.ku8MBSuccess) {
+        LOG_INFO("NPK sensör testi başarılı. Haberleşme kuruldu.");
+        return true;
+    } else {
+        LOG_ERROR("NPK sensör testi başarısız. Modbus kodu: 0x%02X", result);
+        return false;
+    }
 }
+
 
 // **Statik fonksiyonlar**
 void NpkSensor::preTransmissionStatic() {
@@ -65,26 +94,26 @@ bool NpkSensor::readData() {
         npk_error_code = 0;
         return true;
     } else {
-        Serial.print("Modbus Hatası: ");
+        LOG_ERROR("Modbus Hatası: ");
         switch (result) {
             case node.ku8MBIllegalFunction:
-                Serial.println("Illegal Function");
+                LOG_ERROR("Illegal Function");
                 npk_error_code = 1;
                 break;
             case node.ku8MBIllegalDataAddress:
-                Serial.println("Illegal Data Address");
+                LOG_ERROR("Illegal Data Address");
                 npk_error_code = 2;
                 break;
             case node.ku8MBIllegalDataValue:
-                Serial.println("Illegal Data Value");
+                LOG_ERROR("Illegal Data Value");
                 npk_error_code = 3;
                 break;
             case node.ku8MBSlaveDeviceFailure:
-                Serial.println("Slave Device Failure");
+                LOG_ERROR("Slave Device Failure");
                 npk_error_code = 4;
                 break;
             default:
-                Serial.println(result, HEX);
+                LOG_ERROR("Unknown Modbus Error: 0x%02X", result);
                 npk_error_code = result;
         }
         return false;
