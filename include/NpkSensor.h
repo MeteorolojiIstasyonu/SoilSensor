@@ -8,7 +8,8 @@
 class NpkSensor {
 public:
     NpkSensor(HardwareSerial &serial, uint8_t modbusAddress);
-    void begin();
+    int initializeAndRead();
+    bool begin();
     bool readData();
     bool writeData();
     bool readNPKWithRetry(int maxRetries = 5);

@@ -11,11 +11,8 @@ RTC_Module::RTC_Module(uint8_t io_pin, uint8_t sclk_pin, uint8_t ce_pin)
     : _myWire(io_pin, sclk_pin, ce_pin), _Rtc(_myWire) {}
 
 void RTC_Module::begin() {
-    // Serial.begin() ana main.cpp içinde çağrıldığı için burada tekrar çağrılmasına gerek yoktur.
-    // Ancak, modül içinde bağımsız hata ayıklama mesajları için gerekebilir.
+    LOG_INFO("RTC_Module: Başlatılıyor...");
 
-    Serial.println("RTC_Module: Başlatılıyor...");
-    
     _Rtc.Begin();
     initializeRtc(); // RTC'yi yapılandır ve gerekirse zamanı ayarla
 }
@@ -23,9 +20,9 @@ void RTC_Module::begin() {
 void RTC_Module::initializeRtc() {
     /*
     RtcDateTime compiled = RtcDateTime(__DATE__, __TIME__);
-    Serial.print("RTC_Module: Derleme zamanı: ");
+    LOG_INFO("RTC_Module: Derleme zamanı: ");
     printDateTimeToSerial(compiled);
-    Serial.println();
+    LOG_INFO("");
 
     if (!_Rtc.IsDateTimeValid()) {
         LOG_INFO("RTC_Module: RTC DateTime geçersiz! Derleme zamanına ayarlanıyor.");
@@ -98,8 +95,62 @@ void RTC_Module::setDateTime(uint16_t year, uint8_t month, uint8_t day, uint8_t 
         _Rtc.SetDateTime(newDateTime);
         LOG_INFO("RTC zamanı başarıyla ayarlandı.");
         printDateTimeToSerial(newDateTime);
-        Serial.println();
     } else {
         LOG_ERROR("RTC için ayarlanan tarih/saat geçersiz.");
     }
+}
+
+int RTC_Module::initializeAndRead() {
+    _Rtc.Begin();
+
+    // Kurulum kontrolü: RTC'nin çalıştığından emin ol.
+    if (!_Rtc.GetIsRunning()) {
+        LOG_INFO("RTC was not running, attempting to start.");
+        _Rtc.SetIsRunning(true);
+        // Başlatmayı denedikten sonra tekrar kontrol et.
+        if (!_Rtc.GetIsRunning()) {
+            LOG_ERROR("RTC setup failed: Could not start the clock.");
+            return 1; // setup_error
+        }
+    }
+    
+    // Kurulum kontrolü: Yazma korumasının kapalı olduğundan emin ol.
+    if (_Rtc.GetIsWriteProtected()) {
+        LOG_INFO("RTC was write-protected, disabling protection.");
+        _Rtc.SetIsWriteProtected(false);
+         if (_Rtc.GetIsWriteProtected()) {
+            LOG_ERROR("RTC setup failed: Could not disable write protection.");
+            return 1; // setup_error
+        }
+    }
+
+    // Okuma kontrolü: Zamanı al ve geçerli olduğunu doğrula.
+    RtcDateTime now = _Rtc.GetDateTime();
+    if (!now.IsValid()) {
+        LOG_ERROR("RTC read failed: The date/time is not valid.");
+        return 2; // read_error
+    }
+
+    LOG_INFO("RTC initialize and read successful.");
+    printDateTimeToSerial(now); // Mevcut zamanı logla
+    return 0; // success
+}
+
+
+bool RTC_Module::isHealthy() {
+    if (!_Rtc.GetIsRunning()) {
+        LOG_WARN("RTC is not running.");
+        return false;
+    }
+    if (!_Rtc.IsDateTimeValid()) {
+        LOG_WARN("RTC date/time is not valid.");
+        return false;
+    }
+    // Yılın mantıklı bir değer olup olmadığını kontrol et
+    RtcDateTime now = _Rtc.GetDateTime();
+    if (now.Year() < 2024) {
+        LOG_WARN("RTC year seems incorrect (Year: %d).", now.Year());
+        return false;
+    }
+    return true;
 }

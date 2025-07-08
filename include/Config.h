@@ -14,8 +14,11 @@
 #define SD_DATA_FILE "/sensor_data.log"
 #define OTA_FIRMWARE_FILENAME "/firmware.bin" // Firmware'in SD Karta kaydedileceği dosya adı
 #define VERSION_ID_FILE "/version.id"  
+#define FIRST_RUN_DONE_FILE "/first_run_done.txt" // İlk çalıştırmanın tamamlandığını belirten dosya
+#define FIRST_BOOT_DIAGNOSTICS_FILE "/first_boot_diagnostics.txt" 
+#define DIAGNOSTICS_FILE "/diagnostic.txt"
 
-#define uykusuresi (20 * 1000000)  // 20 saniye**********************
+#define uykusuresi (60 * 1000000)  // 100 saniye**********************
 //#define uykusuresi (3600ULL * 1000000ULL) // 1 saat = 3.600.000.000 µs (64-bit güvenli)*************************
 //#define uykusuresi (1800LL * 1000000LL)  // 30dk (64-bit güvenli)*************************
 #define MAX_WAKECOUNTER 1    // verinin gönderileceği maksimum uyanma sayısı
