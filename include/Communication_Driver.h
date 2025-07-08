@@ -45,25 +45,15 @@ public:
     bool publishData(const char* payload);
     
     bool enableGPS();
-    bool disableGPS();
     bool getGPS(float* lat, float* lon, float* speed = nullptr, float* alt = nullptr, int* year = nullptr, int* month = nullptr, int* day = nullptr, int* hour = nullptr, int* minute = nullptr, int* second = nullptr);
     bool readGPSWithRetry(int maxRetries = 50);
-    void publishGpsData(); // GPS isteğini işleyen fonksiyon
-    volatile bool gps_request_flag = false;
+    bool disableGPS();
+
     void updateRtcWithGpsTime();
     
     void updateModemBatteryStatus();
     float readAndProcessBatteryVoltage();
     float readAndProcessSolarVoltage();
-
-    int getLastStatusCode();
-    void resetLastStatusCode();
-
-    volatile bool ota_request_flag = false;
-    String ota_url;
-    String ota_version_id;
-    void performOTA(const char* ota_url, const char* version_id);
-    
 
 private:
     HardwareSerial& _modemSerial; // Modemin donanım seri portuna referans
@@ -90,22 +80,18 @@ private:
     bool _gps_fix_available;
     char Location[50];
     char gpsTime[25];
-    
-    int _last_status_code; // Sunucudan gelen son durum kodunu saklar
 
     float _sup_bat_external;
     float _sup_solar_external;
     char _sup_4v[6];              // Modemin pil voltajını bir dize olarak depolar (örneğin, "4.12V")
     RunningAverage _batteryVoltageAvg;
     RunningAverage _solarVoltageAvg;
-
-    static Communication_Driver* _instance; 
-    // Yardımcı fonksiyon: SHA-256 hash'i hesaplar
-    String calculateSHA256(const String& input);
-
     
+    static Communication_Driver* _instance; 
+    // OTA güncellemesi için özel fonksiyon
+    void performOTA(const char* ota_url);
 
 
 };
 
-#endif
+#endif 
